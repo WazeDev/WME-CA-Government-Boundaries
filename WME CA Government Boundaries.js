@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name            WME CA Government Boundaries
-// @namespace       https://greasyfork.org/users/45389
-// @version         2026.03.01.00
+// @namespace       https://greasyfork.org/en/users/1366579-js55ct
+// @version         2026.03.02.00
 // @description     Adds layers to display Canadian provincial, census division, census subdivision, designated place, and forward sortation area boundaries.
 // @author          JS55CT
 // @include         /^https:\/\/(www|beta)\.waze\.com\/(?!user\/)(.{2,6}\/)?editor\/?.*$/
@@ -15,7 +15,6 @@
 // @connect         greasyfork.org
 // ==/UserScript==
 
-//TO DUE BEFORE RELEASE.  Create Github Repo in WazeDev, Create greesyforce script page and tie it to WazeDev repo updates.  Add greesyforce update URL below and add back the scripupdatemanitor.
 
 /**
  * @fileoverview WME CA Government Boundaries - A Waze Map Editor script for visualizing Canadian boundaries
@@ -42,7 +41,7 @@
   'use strict';
 
   const UPDATE_MESSAGE = 'Initial Release';
-  const downloadUrl = '';
+  const downloadUrl = 'https://update.greasyfork.org/scripts/568155/WME%20CA%20Government%20Boundaries.user.js';
 
   const SETTINGS_STORE_NAME = 'wme_ca_government_boundaries';
 
@@ -92,7 +91,7 @@
 
   const PROCESS_CONTEXTS = [];
   let _activeRequests = [];
-  const sdk = await bootstrap({}); //, scriptUpdateMonitor: { downloadUrl }
+  const sdk = await bootstrap({ scriptUpdateMonitor: { downloadUrl } });
 
   const PROVINCES_LAYER_NAME = "CA Gov't Boundaries - Provinces & Territories";
   const CENSUS_DIVISIONS_LAYER_NAME = "CA Gov't Boundaries - Census Divisions";

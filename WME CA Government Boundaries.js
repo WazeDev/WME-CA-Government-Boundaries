@@ -1,10 +1,12 @@
 // ==UserScript==
 // @name            WME CA Government Boundaries
 // @namespace       https://greasyfork.org/en/users/1366579-js55ct
-// @version         2026.03.03.00
+// @version         2026.03.03.1
 // @description     Adds layers to display Canadian provincial, census division, census subdivision, designated place, and forward sortation area boundaries.
 // @author          JS55CT
-// @include         /^https:\/\/(www|beta)\.waze\.com\/(?!user\/)(.{2,6}\/)?editor\/?.*$/
+// @match         *://*.waze.com/*editor*
+// @exclude       *://*.waze.com/user/editor*
+// @exclude       *://*.waze.com/editor/sdk/*
 // @require         https://cdn.jsdelivr.net/npm/@turf/turf@7/turf.min.js
 // @require         https://greasyfork.org/scripts/24851-wazewrap/code/WazeWrap.js
 // @require         https://update.greasyfork.org/scripts/509664/WME%20Utils%20-%20Bootstrap.js

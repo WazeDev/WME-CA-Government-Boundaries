@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name            WME CA Government Boundaries
 // @namespace       https://greasyfork.org/en/users/1366579-js55ct
-// @version         2026.03.02.00
+// @version         2026.03.03.00
 // @description     Adds layers to display Canadian provincial, census division, census subdivision, designated place, and forward sortation area boundaries.
 // @author          JS55CT
 // @include         /^https:\/\/(www|beta)\.waze\.com\/(?!user\/)(.{2,6}\/)?editor\/?.*$/
@@ -40,7 +40,7 @@
 (async function main() {
   'use strict';
 
-  const UPDATE_MESSAGE = 'Initial Release';
+  const UPDATE_MESSAGE = 'Small Fix to make Label Outline Width dynamic to zoom level';
   const downloadUrl = 'https://update.greasyfork.org/scripts/568155/WME%20CA%20Government%20Boundaries.user.js';
 
   const SETTINGS_STORE_NAME = 'wme_ca_government_boundaries';
@@ -340,30 +340,30 @@
       lastVersion: GM_info.script.version,
       layers: {
         provinces: {
-          visible: true,
+          visible: false,
           dynamicLabels: true,
           color: '#0000ff',
           labelOutlineColor: '#add8e6',
-          opacity: 0.6,
+          opacity: 0.75,
         },
         censusDivisions: {
-          visible: true,
+          visible: false,
           dynamicLabels: true,
           color: '#ff8c69',
           labelOutlineColor: '#000000',
-          opacity: 0.6,
+          opacity: 0.75,
           minZoom: 8,
         },
         censusSubdivisions: {
-          visible: true,
+          visible: false,
           dynamicLabels: true,
-          color: '#00aa44',
-          labelOutlineColor: '#ffffff',
-          opacity: 0.6,
+          color: '#ffd700',
+          labelOutlineColor: '#000000',
+          opacity: 0.75,
           minZoom: 10,
         },
         designatedPlaces: {
-          visible: true,
+          visible: false,
           dynamicLabels: true,
           color: '#9400d3',
           labelOutlineColor: '#ffffff',
@@ -371,11 +371,11 @@
           minZoom: 11,
         },
         fsa: {
-          visible: true,
+          visible: false,
           dynamicLabels: true,
           color: '#ff0000',
-          labelOutlineColor: '#ffffff',
-          opacity: 0.6,
+          labelOutlineColor: '#800000',
+          opacity: 0.75,
           minZoom: 11,
         },
       },
@@ -1078,6 +1078,7 @@
         getStrokeColor: () => _settings.layers.provinces.color,
         getFontColor: () => _settings.layers.provinces.color,
         getLabelOutlineColor: () => _settings.layers.provinces.labelOutlineColor,
+        getLabelOutlineWidth: ({ zoomLevel }) => Math.max(1, Math.round((zoomLevel + 2) / 8)),
       },
       styleRules: [
         {
@@ -1091,7 +1092,7 @@
             label: '${getLabel}',
             labelYOffset: '${getLabelYOffset}',
             labelOutlineColor: '${getLabelOutlineColor}',
-            labelOutlineWidth: 2,
+            labelOutlineWidth: '${getLabelOutlineWidth}',
           },
         },
         {
@@ -1127,6 +1128,7 @@
         getStrokeColor: () => _settings.layers.censusDivisions.color,
         getFontColor: () => _settings.layers.censusDivisions.color,
         getLabelOutlineColor: () => _settings.layers.censusDivisions.labelOutlineColor,
+        getLabelOutlineWidth: ({ zoomLevel }) => Math.max(1, Math.round((zoomLevel + 2) / 8)),
       },
       styleRules: [
         {
@@ -1143,7 +1145,7 @@
             fontWeight: 'bold',
             fontColor: '${getFontColor}',
             labelOutlineColor: '${getLabelOutlineColor}',
-            labelOutlineWidth: 2,
+            labelOutlineWidth: '${getLabelOutlineWidth}',
           },
         },
       ],
@@ -1168,6 +1170,7 @@
         getStrokeColor: () => _settings.layers.censusSubdivisions.color,
         getFontColor: () => _settings.layers.censusSubdivisions.color,
         getLabelOutlineColor: () => _settings.layers.censusSubdivisions.labelOutlineColor,
+        getLabelOutlineWidth: ({ zoomLevel }) => Math.max(1, Math.round((zoomLevel + 2) / 8)),
       },
       styleRules: [
         {
@@ -1184,7 +1187,7 @@
             fontWeight: 'bold',
             fontColor: '${getFontColor}',
             labelOutlineColor: '${getLabelOutlineColor}',
-            labelOutlineWidth: 2,
+            labelOutlineWidth: '${getLabelOutlineWidth}',
           },
         },
       ],
@@ -1205,6 +1208,7 @@
         getStrokeColor: () => _settings.layers.designatedPlaces.color,
         getFontColor: () => _settings.layers.designatedPlaces.color,
         getLabelOutlineColor: () => _settings.layers.designatedPlaces.labelOutlineColor,
+        getLabelOutlineWidth: ({ zoomLevel }) => Math.max(1, Math.round((zoomLevel + 2) / 8)),
       },
       styleRules: [
         {
@@ -1221,7 +1225,7 @@
             fontWeight: 'bold',
             fontColor: '${getFontColor}',
             labelOutlineColor: '${getLabelOutlineColor}',
-            labelOutlineWidth: 2,
+            labelOutlineWidth: '${getLabelOutlineWidth}',
           },
         },
       ],
@@ -1242,6 +1246,7 @@
         getStrokeColor: () => _settings.layers.fsa.color,
         getFontColor: () => _settings.layers.fsa.color,
         getLabelOutlineColor: () => _settings.layers.fsa.labelOutlineColor,
+        getLabelOutlineWidth: ({ zoomLevel }) => Math.max(1, Math.round((zoomLevel + 2) / 8)),
       },
       styleRules: [
         {
@@ -1259,7 +1264,7 @@
             label: '${getLabel}',
             labelYOffset: -20,
             labelOutlineColor: '${getLabelOutlineColor}',
-            labelOutlineWidth: 2,
+            labelOutlineWidth: '${getLabelOutlineWidth}',
           },
         },
       ],
@@ -1633,6 +1638,21 @@
         box-shadow: 0 4px 6px rgba(0,0,0,0.1);
       }
 
+      .wme-cagb-panel .cagb-color-picker-display::after {
+        content: attr(data-color);
+        position: absolute;
+        bottom: 3px;
+        right: 5px;
+        font-size: 9px;
+        font-family: 'JetBrains Mono', monospace;
+        font-weight: 500;
+        color: white;
+        background: rgba(0, 0, 0, 0.5);
+        padding: 2px 5px;
+        border-radius: 3px;
+        backdrop-filter: blur(4px);
+      }
+
       .wme-cagb-panel .cagb-slider-group {
         display: flex; align-items: center; gap: 10px;
       }
@@ -1684,20 +1704,41 @@
       }
 
       .wme-cagb-panel .cagb-checkbox-wrapper {
-        display: flex; align-items: center; gap: 10px; cursor: pointer;
+        display: flex; align-items: center; gap: 8px; padding: 10px;
+        background: var(--surface_variant); border-radius: 7px;
+        cursor: pointer; transition: all 150ms;
       }
 
-      .wme-cagb-panel .cagb-checkbox-input { display: none; }
+      .wme-cagb-panel .cagb-checkbox-wrapper:hover {
+        background: var(--surface_default);
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+      }
+
+      .wme-cagb-panel .cagb-checkbox-input {
+        position: relative; width: 18px; height: 18px; cursor: pointer;
+      }
+
+      .wme-cagb-panel .cagb-checkbox-input input {
+        opacity: 0; position: absolute;
+      }
 
       .wme-cagb-panel .cagb-checkbox-custom {
         width: 18px; height: 18px; border-radius: 4px;
-        border: 2px solid var(--hairline); background: var(--background_default);
+        border: 2px solid var(--hairline); background: var(--surface_default);
         display: flex; align-items: center; justify-content: center;
-        transition: all 150ms; flex-shrink: 0;
+        transition: all 150ms;
       }
 
-      .wme-cagb-panel .cagb-checkbox-input:checked + .cagb-checkbox-custom {
-        background: #c0392b; border-color: #c0392b; color: white; font-size: 11px;
+      .wme-cagb-panel .cagb-checkbox-input input:checked + .cagb-checkbox-custom {
+        background: #c0392b; border-color: #c0392b;
+      }
+
+      .wme-cagb-panel .cagb-checkbox-custom i {
+        color: white; font-size: 11px; opacity: 0; transform: scale(0); transition: all 150ms;
+      }
+
+      .wme-cagb-panel .cagb-checkbox-input input:checked + .cagb-checkbox-custom i {
+        opacity: 1; transform: scale(1);
       }
 
       .wme-cagb-panel .cagb-checkbox-label { font-size: 13px; color: var(--content_default); flex: 1; }
@@ -1738,7 +1779,7 @@
         --accent-color: #ff7043; --accent-color-light: #ff8a65;
       }
       .wme-cagb-panel .cagb-layer-card[data-layer="censusSubdivisions"] {
-        --accent-color: #00c853; --accent-color-light: #69f0ae;
+        --accent-color: #ffd700; --accent-color-light: #ffe566;
       }
       .wme-cagb-panel .cagb-layer-card[data-layer="designatedPlaces"] {
         --accent-color: #aa00ff; --accent-color-light: #ea80fc;
@@ -1871,6 +1912,7 @@
       input.addEventListener('input', (e) => {
         const color = e.target.value;
         display.style.background = color;
+        display.setAttribute('data-color', color);
         const setting = input.getAttribute('data-setting');
         _settings.layers[layerKey][setting] = color;
         sdk.Map.redrawLayer({ layerName: LAYER_NAME_MAP[layerKey] });
@@ -1942,7 +1984,7 @@
         settings: {
           provinces: { color: '#0000ff', opacity: 0.9 },
           censusDivisions: { color: '#ffcc00', opacity: 0.9 },
-          censusSubdivisions: { color: '#00cc00', opacity: 0.9 },
+          censusSubdivisions: { color: '#ffff00', opacity: 0.9 },
           designatedPlaces: { color: '#ff00ff', opacity: 0.9 },
           fsa: { color: '#ff0000', opacity: 0.9 },
         },
@@ -1960,7 +2002,7 @@
         settings: {
           provinces: { color: '#0173B2' },
           censusDivisions: { color: '#DE8F05' },
-          censusSubdivisions: { color: '#029E73' },
+          censusSubdivisions: { color: '#D4AA00' },
           designatedPlaces: { color: '#CC78BC' },
           fsa: { color: '#ECE133' },
         },
@@ -1969,7 +2011,7 @@
         settings: {
           provinces: { color: '#00008B', opacity: 0.7 },
           censusDivisions: { color: '#8B4500', opacity: 0.7 },
-          censusSubdivisions: { color: '#005000', opacity: 0.7 },
+          censusSubdivisions: { color: '#b39700', opacity: 0.7 },
           designatedPlaces: { color: '#4B0082', opacity: 0.7 },
           fsa: { color: '#8B0000', opacity: 0.7 },
         },

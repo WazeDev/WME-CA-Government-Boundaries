@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name            WME CA Government Boundaries
 // @namespace       https://greasyfork.org/en/users/1366579-js55ct
-// @version         2026.03.03.1
+// @version         2026.09.14.1
 // @description     Adds layers to display Canadian provincial, census division, census subdivision, designated place, and forward sortation area boundaries.
 // @author          JS55CT
 // @match         *://*.waze.com/*editor*
@@ -42,7 +42,8 @@
 (async function main() {
   'use strict';
 
-  const UPDATE_MESSAGE = 'Small Fix to make Label Outline Width dynamic to zoom level';
+  const UPDATE_MESSAGE = 'Improved: HTTP status validation, auto-retry with exponential backoff, error notifications, timeout cleanup on map pans, and comprehensive debug logging';
+  const DEBUG = false;
   const downloadUrl = 'https://update.greasyfork.org/scripts/568155/WME%20CA%20Government%20Boundaries.user.js';
 
   const SETTINGS_STORE_NAME = 'wme_ca_government_boundaries';
@@ -93,6 +94,17 @@
 
   const PROCESS_CONTEXTS = [];
   let _activeRequests = [];
+  let _pendingTimeouts = []; // Track all active timeout IDs to clear on new fetch
+
+  // Track retry state for each layer type (handles rate limits and temporary API failures)
+  const RETRY_STATE = {
+    province: { retryCount: 0, maxRetries: 5, baseDelay: 5000 },
+    censusDivision: { retryCount: 0, maxRetries: 5, baseDelay: 5000 },
+    censusSubdivision: { retryCount: 0, maxRetries: 5, baseDelay: 5000 },
+    designatedPlace: { retryCount: 0, maxRetries: 5, baseDelay: 5000 },
+    fsa: { retryCount: 0, maxRetries: 5, baseDelay: 5000 },
+  };
+
   const sdk = await bootstrap({ scriptUpdateMonitor: { downloadUrl } });
 
   const PROVINCES_LAYER_NAME = "CA Gov't Boundaries - Provinces & Territories";
@@ -321,7 +333,7 @@
   }
 
   function logDebug(message) {
-    console.log('CAGB:', message);
+    if (DEBUG) console.log('CAGB:', message);
   }
 
   function logError(message) {
@@ -522,6 +534,9 @@
     const geometryStr = encodeURIComponent(JSON.stringify(geometry));
     const maxAllowableOffsetDeg = getMaxAllowableOffsetForZoom(zoom);
 
+    logDebug(`Extent: ${extent.map(e => e.toFixed(4)).join(', ')}`);
+    logDebug(`Geometry: ${JSON.stringify(geometry)}`);
+
     let url = `${baseUrl}query?geometry=${geometryStr}`;
     url += '&returnGeometry=true';
     url += `&outFields=${encodeURIComponent(outFields.join(','))}`;
@@ -530,7 +545,6 @@
     url += '&geometryType=esriGeometryEnvelope&inSR=4326&outSR=4326';
     url += `&f=${fParam}`;
 
-    console.log("URL", url);
     return url;
   }
 
@@ -837,7 +851,9 @@
     }
 
     context.callCount--;
+    logDebug(`${type}: processBoundaries complete - callCount: ${context.callCount}, contexts pending: ${PROCESS_CONTEXTS.length}`);
     if (context.callCount === 0) {
+      logDebug(`All requests finished for context - updating UI, removing context`);
       updateNameDisplay(context);
       const idx = PROCESS_CONTEXTS.indexOf(context);
       if (idx > -1) {
@@ -866,10 +882,18 @@
       PROCESS_CONTEXTS.forEach((ctx) => { ctx.cancel = true; });
     }
 
+    // Clear all pending timeouts from previous requests
+    logDebug(`Cleanup: Clearing ${_pendingTimeouts.length} pending timeouts, aborting ${_activeRequests.length} requests`);
+    _pendingTimeouts.forEach((timeoutId) => {
+      clearTimeout(timeoutId);
+    });
+    _pendingTimeouts = [];
+
     _activeRequests.forEach((request) => {
       if (request && request.abort) request.abort();
     });
     _activeRequests = [];
+    logDebug(`Cleanup: Complete - active requests now: ${_activeRequests.length}, pending timeouts now: ${_pendingTimeouts.length}`);
 
     const extent = sdk.Map.getMapExtent();
     const zoom = sdk.Map.getZoomLevel();
@@ -904,26 +928,118 @@
       if (zoom >= minZoom) {
         const url = getUrl(layerUrl, extent, zoom, outFields);
         context.callCount++;
-        const request = GM_xmlhttpRequest({
+        logDebug(`${type}: Starting request - zoom: ${zoom}`);
+        logDebug(`${type}: URL: ${url}`);
+
+        let request;
+
+        // Set up timeout (30 seconds) - clears both in success and error
+        const timeoutId = setTimeout(() => {
+          _pendingTimeouts = _pendingTimeouts.filter(id => id !== timeoutId);
+          if (request) request.abort();
+          const msg = `${type}: Request timeout (30s)`;
+          logError(msg);
+          //WazeWrap.Alerts.warning('CAGB', msg);
+          handleFetchError('timeout', null);
+        }, 30000);
+        _pendingTimeouts.push(timeoutId);
+        const handleFetchError = (errorCode, res) => {
+          // Determine if we should retry based on error type
+          const shouldRetry = (
+            errorCode === 'timeout' ||
+            errorCode === 'network' ||
+            (res && res.status === 429) ||
+            (res && res.status >= 500)
+          );
+
+          const retryState = RETRY_STATE[type];
+          if (shouldRetry && retryState.retryCount < retryState.maxRetries) {
+            const delayMs = retryState.baseDelay * Math.pow(2, retryState.retryCount);
+            const delaySeconds = Math.round(delayMs / 1000);
+            const attemptNum = retryState.retryCount + 1;
+
+            let statusInfo = '';
+            if (res && res.status) {
+              statusInfo = ` (HTTP ${res.status})`;
+            } else if (errorCode === 'timeout') {
+              statusInfo = ' (timeout)';
+            } else if (errorCode === 'network') {
+              statusInfo = ' (network error)';
+            }
+
+            logDebug(`${type}: Scheduling retry - attempt: ${attemptNum}/${retryState.maxRetries}, delay: ${delayMs}ms, error: ${errorCode}`);
+
+            const msg = `${type}: Retrying in ${delaySeconds}s...${statusInfo} (attempt ${attemptNum}/${retryState.maxRetries})`;
+            logError(msg);
+            //WazeWrap.Alerts.info('CAGB', msg);
+
+            retryState.retryCount++;
+
+            const retryTimeoutId = setTimeout(() => {
+              _pendingTimeouts = _pendingTimeouts.filter(id => id !== retryTimeoutId);
+              doFetch(layerUrl, type, outFields, labelFn, minZoom);
+            }, delayMs);
+            _pendingTimeouts.push(retryTimeoutId);
+
+            processBoundaries([], context, type, labelFn);
+          } else {
+            // Max retries exhausted or non-retryable error
+            let errorMsg = `${type}: `;
+            if (!shouldRetry && res && res.status) {
+              errorMsg += `API error ${res.status}`;
+            } else if (retryState.retryCount >= retryState.maxRetries) {
+              errorMsg += `Failed after ${retryState.maxRetries} retries`;
+            } else {
+              errorMsg += 'Error loading. Please try again.';
+            }
+
+            logError(errorMsg);
+            //WazeWrap.Alerts.error('CAGB', errorMsg);
+            processBoundaries([], context, type, labelFn);
+          }
+        };
+
+        request = GM_xmlhttpRequest({
           method: 'GET',
           url,
           onload(res) {
+            clearTimeout(timeoutId);
+            _pendingTimeouts = _pendingTimeouts.filter(id => id !== timeoutId);
+            logDebug(`${type}: Request completed - status: ${res.status}, pending timeouts: ${_pendingTimeouts.length}, response length: ${res.responseText?.length || 0} bytes`);
+
+            // Check HTTP status before trying to parse JSON
+            if (res.status !== 200) {
+              logError(`${type}: HTTP ${res.status} ${res.statusText}`);
+              logDebug(`${type}: Response preview: ${res.responseText?.substring(0, 200) || '(empty)'}`);
+              handleFetchError('http_error', res);
+              return;
+            }
+
             try {
               const data = JSON.parse(res.responseText);
+
               if (data.error) {
-                logError(`${type} layer API error: ${data.error.message}`);
+                logError(`${type}: API error: ${data.error.message}`);
+                handleFetchError('api_error', res);
+              } else if (!data.features || !Array.isArray(data.features)) {
+                logError(`${type}: Invalid response structure (missing features)`);
                 processBoundaries([], context, type, labelFn);
               } else {
-                processBoundaries(data.features || [], context, type, labelFn);
+                // Success! Reset retry counter
+                RETRY_STATE[type].retryCount = 0;
+                processBoundaries(data.features, context, type, labelFn);
               }
             } catch (e) {
-              logError(`${type} layer parse/process error: ${e.message}`);
+              logError(`${type}: Parse error: ${e.message}`);
               processBoundaries([], context, type, labelFn);
             }
           },
           onerror(e) {
-            logError(`${type} layer network error: ${e.error || 'unknown'}`);
-            processBoundaries([], context, type, labelFn);
+            clearTimeout(timeoutId);
+            _pendingTimeouts = _pendingTimeouts.filter(id => id !== timeoutId);
+            const msg = `${type}: Network error${e.error ? ': ' + e.error : ''}`;
+            logError(msg);
+            handleFetchError('network', null);
           },
         });
         _activeRequests.push(request);
@@ -966,6 +1082,7 @@
    * @param {boolean} args.checked - New checked state
    */
   function onLayerCheckboxToggled(args) {
+    logDebug(`Layer toggle: ${args.name} → ${args.checked}`);
     let layerName;
     let settingsObj;
     let layerKey;
@@ -1026,8 +1143,10 @@
    * @param {number} [delay=250] - Delay in milliseconds
    */
   function debouncedFetchBoundaries(delay = 250) {
+    logDebug(`Debounce: Clearing previous timeout, scheduling new fetch in ${delay}ms`);
     clearTimeout(_fetchBoundariesTimeout);
     _fetchBoundariesTimeout = setTimeout(() => {
+      logDebug(`Debounce: Timer fired! Calling fetchBoundaries now`);
       fetchBoundaries();
     }, delay);
   }
@@ -1037,6 +1156,8 @@
    */
   function onMapMoveEnd() {
     try {
+      const zoom = sdk.Map.getZoomLevel();
+      logDebug(`Map moved: zoom=${zoom}`);
       debouncedFetchBoundaries();
     } catch (e) {
       logError(e);

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name            WME CA Government Boundaries
 // @namespace       https://greasyfork.org/en/users/1366579-js55ct
-// @version         2026.09.14.1
+// @version         2026.10.26.0
 // @description     Adds layers to display Canadian provincial, census division, census subdivision, designated place, and forward sortation area boundaries.
 // @author          JS55CT
 // @match         *://*.waze.com/*editor*
@@ -42,7 +42,7 @@
 (async function main() {
   'use strict';
 
-  const UPDATE_MESSAGE = 'Improved: HTTP status validation, auto-retry with exponential backoff, error notifications, timeout cleanup on map pans, and comprehensive debug logging';
+  const UPDATE_MESSAGE = 'Updated to the WME SDK async mode (no visible change to layers or settings).';
   const DEBUG = false;
   const downloadUrl = 'https://update.greasyfork.org/scripts/568155/WME%20CA%20Government%20Boundaries.user.js';
 
@@ -105,7 +105,7 @@
     fsa: { retryCount: 0, maxRetries: 5, baseDelay: 5000 },
   };
 
-  const sdk = await bootstrap({ scriptUpdateMonitor: { downloadUrl } });
+  const sdk = await bootstrap({ scriptUpdateMonitor: { downloadUrl }, mode: 'async' });
 
   const PROVINCES_LAYER_NAME = "CA Gov't Boundaries - Provinces & Territories";
   const CENSUS_DIVISIONS_LAYER_NAME = "CA Gov't Boundaries - Census Divisions";
@@ -452,8 +452,8 @@
    *
    * @performance Prevents thousands of redundant turf.js calculations per hour
    */
-  function ensurePolygonCaches() {
-    const ext = sdk.Map.getMapExtent();
+  async function ensurePolygonCaches() {
+    const ext = await sdk.Map.getMapExtent();
 
     if (
       _cachedExtent &&
@@ -494,18 +494,18 @@
     _cachedClipPolygon = turf.bboxPolygon(clipBox);
   }
 
-  function getScreenPolygon() {
-    ensurePolygonCaches();
+  async function getScreenPolygon() {
+    await ensurePolygonCaches();
     return _cachedScreenPolygon;
   }
 
-  function getScreenArea() {
-    ensurePolygonCaches();
+  async function getScreenArea() {
+    await ensurePolygonCaches();
     return _cachedScreenArea;
   }
 
-  function getClipPolygon() {
-    ensurePolygonCaches();
+  async function getClipPolygon() {
+    await ensurePolygonCaches();
     return _cachedClipPolygon;
   }
 
@@ -562,8 +562,8 @@
    * @param {Object} context - Processing context to check for cancellation
    * @param {boolean} context.cancel - If true, display update is skipped
    */
-  function updateNameDisplay(context) {
-    const center = sdk.Map.getMapCenter();
+  async function updateNameDisplay(context) {
+    const center = await sdk.Map.getMapCenter();
     const mapCenter = turf.point([center.lon, center.lat]);
 
     if (context.cancel) return;
@@ -624,10 +624,10 @@
    * @param {Object} attributes - Properties to attach to resulting features
    * @returns {Object[]} Array of Turf.js polygon features, clipped and ready for rendering
    */
-  function extractPolygonsWithExternalRings(boundary, attributes) {
+  async function extractPolygonsWithExternalRings(boundary, attributes) {
     const coordinates = boundary.geometry.rings;
     const externalPolygons = [];
-    const clipPolygon = getClipPolygon();
+    const clipPolygon = await getClipPolygon();
 
     let mainOuterPolygon = turf.polygon([coordinates[0]], attributes);
     mainOuterPolygon.id = 0;
@@ -694,8 +694,8 @@
    * @param {Object} feature - Turf.js polygon feature
    * @returns {Object[]} Array of Turf.js point features for label rendering
    */
-  function getLabelPoints(feature) {
-    const screenPolygon = getScreenPolygon();
+  async function getLabelPoints(feature) {
+    const screenPolygon = await getScreenPolygon();
     const intersection = turf.intersect(turf.featureCollection([screenPolygon, feature]));
     const polygons = [];
     if (intersection) {
@@ -713,7 +713,7 @@
       }
     }
 
-    const screenArea = getScreenArea();
+    const screenArea = await getScreenArea();
     const points = polygons
       .filter((polygon) => {
         const polygonArea = turf.area(polygon);
@@ -741,7 +741,7 @@
    *                        'designatedPlace', or 'fsa'
    * @param {Function} getLabelFn - Function that receives feature attributes and returns label string
    */
-  function processBoundaries(boundaries, context, type, getLabelFn) {
+  async function processBoundaries(boundaries, context, type, getLabelFn) {
     let layerName;
     let layerSettings;
 
@@ -775,16 +775,16 @@
     if (context.cancel || !layerSettings.visible) {
       // do nothing
     } else {
-      const screenArea = getScreenArea();
-      sdk.Map.removeAllFeaturesFromLayer({ layerName });
+      const screenArea = await getScreenArea();
+      await sdk.Map.removeAllFeaturesFromLayer({ layerName });
 
       const allPolygons = [];
       const allLabels = [];
 
       if (!context.cancel) {
         try {
-          boundaries.forEach((boundary) => {
-            if (context.cancel) return;
+          for (const boundary of boundaries) {
+            if (context.cancel) continue;
 
             const labelText = getLabelFn(boundary.attributes);
             const attributes = {
@@ -793,7 +793,7 @@
               type,
             };
 
-            const features = extractPolygonsWithExternalRings(boundary, attributes);
+            const features = await extractPolygonsWithExternalRings(boundary, attributes);
             if (features.length) {
               if (type === 'fsa' || type === 'censusDivision') {
                 allFeatures.push(...features);
@@ -813,22 +813,22 @@
               allPolygons.push(...features);
 
               if (layerSettings.dynamicLabels) {
-                features.forEach((feature) => {
-                  const labels = getLabelPoints(feature);
+                for (const feature of features) {
+                  const labels = await getLabelPoints(feature);
                   if (labels?.length) {
                     allLabels.push(...labels);
                   }
-                });
+                }
               }
             }
-          });
+          }
         } catch (e) {
           logError(`processBoundaries geometry error for ${type}: ${e.message}`);
         }
 
         if (allPolygons.length && !context.cancel) {
           try {
-            sdk.Map.addFeaturesToLayer({ layerName, features: allPolygons });
+            await sdk.Map.addFeaturesToLayer({ layerName, features: allPolygons });
           } catch (ex) {
             logError('FAIL adding polygons: ' + ex);
           }
@@ -836,7 +836,7 @@
 
         if (allLabels.length && !context.cancel) {
           try {
-            sdk.Map.addFeaturesToLayer({ layerName, features: allLabels });
+            await sdk.Map.addFeaturesToLayer({ layerName, features: allLabels });
           } catch (ex) {
             logError('FAIL adding labels: ' + ex);
           }
@@ -854,7 +854,7 @@
     logDebug(`${type}: processBoundaries complete - callCount: ${context.callCount}, contexts pending: ${PROCESS_CONTEXTS.length}`);
     if (context.callCount === 0) {
       logDebug(`All requests finished for context - updating UI, removing context`);
-      updateNameDisplay(context);
+      await updateNameDisplay(context);
       const idx = PROCESS_CONTEXTS.indexOf(context);
       if (idx > -1) {
         PROCESS_CONTEXTS.splice(idx, 1);
@@ -877,7 +877,10 @@
    *
    * @performance Debounced by debouncedFetchBoundaries() to prevent excessive API calls
    */
-  function fetchBoundaries() {
+  async function fetchBoundaries() {
+    const extent = await sdk.Map.getMapExtent();
+    const zoom = await sdk.Map.getZoomLevel();
+
     if (PROCESS_CONTEXTS.length > 0) {
       PROCESS_CONTEXTS.forEach((ctx) => { ctx.cancel = true; });
     }
@@ -895,8 +898,6 @@
     _activeRequests = [];
     logDebug(`Cleanup: Complete - active requests now: ${_activeRequests.length}, pending timeouts now: ${_pendingTimeouts.length}`);
 
-    const extent = sdk.Map.getMapExtent();
-    const zoom = sdk.Map.getZoomLevel();
     const context = { callCount: 0, cancel: false };
     PROCESS_CONTEXTS.push(context);
 
@@ -924,7 +925,7 @@
      * @param {Function} labelFn - Maps feature attributes to a display string
      * @param {number} [minZoom=0] - Minimum zoom level required to fetch this layer
      */
-    function doFetch(layerUrl, type, outFields, labelFn, minZoom = 0) {
+    async function doFetch(layerUrl, type, outFields, labelFn, minZoom = 0) {
       if (zoom >= minZoom) {
         const url = getUrl(layerUrl, extent, zoom, outFields);
         context.callCount++;
@@ -934,16 +935,16 @@
         let request;
 
         // Set up timeout (30 seconds) - clears both in success and error
-        const timeoutId = setTimeout(() => {
+        const timeoutId = setTimeout(async () => {
           _pendingTimeouts = _pendingTimeouts.filter(id => id !== timeoutId);
           if (request) request.abort();
           const msg = `${type}: Request timeout (30s)`;
           logError(msg);
           //WazeWrap.Alerts.warning('CAGB', msg);
-          handleFetchError('timeout', null);
+          await handleFetchError('timeout', null);
         }, 30000);
         _pendingTimeouts.push(timeoutId);
-        const handleFetchError = (errorCode, res) => {
+        const handleFetchError = async (errorCode, res) => {
           // Determine if we should retry based on error type
           const shouldRetry = (
             errorCode === 'timeout' ||
@@ -975,13 +976,13 @@
 
             retryState.retryCount++;
 
-            const retryTimeoutId = setTimeout(() => {
+            const retryTimeoutId = setTimeout(async () => {
               _pendingTimeouts = _pendingTimeouts.filter(id => id !== retryTimeoutId);
-              doFetch(layerUrl, type, outFields, labelFn, minZoom);
+              await doFetch(layerUrl, type, outFields, labelFn, minZoom);
             }, delayMs);
             _pendingTimeouts.push(retryTimeoutId);
 
-            processBoundaries([], context, type, labelFn);
+            await processBoundaries([], context, type, labelFn);
           } else {
             // Max retries exhausted or non-retryable error
             let errorMsg = `${type}: `;
@@ -995,14 +996,14 @@
 
             logError(errorMsg);
             //WazeWrap.Alerts.error('CAGB', errorMsg);
-            processBoundaries([], context, type, labelFn);
+            await processBoundaries([], context, type, labelFn);
           }
         };
 
         request = GM_xmlhttpRequest({
           method: 'GET',
           url,
-          onload(res) {
+          async onload(res) {
             clearTimeout(timeoutId);
             _pendingTimeouts = _pendingTimeouts.filter(id => id !== timeoutId);
             logDebug(`${type}: Request completed - status: ${res.status}, pending timeouts: ${_pendingTimeouts.length}, response length: ${res.responseText?.length || 0} bytes`);
@@ -1011,7 +1012,7 @@
             if (res.status !== 200) {
               logError(`${type}: HTTP ${res.status} ${res.statusText}`);
               logDebug(`${type}: Response preview: ${res.responseText?.substring(0, 200) || '(empty)'}`);
-              handleFetchError('http_error', res);
+              await handleFetchError('http_error', res);
               return;
             }
 
@@ -1020,51 +1021,51 @@
 
               if (data.error) {
                 logError(`${type}: API error: ${data.error.message}`);
-                handleFetchError('api_error', res);
+                await handleFetchError('api_error', res);
               } else if (!data.features || !Array.isArray(data.features)) {
                 logError(`${type}: Invalid response structure (missing features)`);
-                processBoundaries([], context, type, labelFn);
+                await processBoundaries([], context, type, labelFn);
               } else {
                 // Success! Reset retry counter
                 RETRY_STATE[type].retryCount = 0;
-                processBoundaries(data.features, context, type, labelFn);
+                await processBoundaries(data.features, context, type, labelFn);
               }
             } catch (e) {
               logError(`${type}: Parse error: ${e.message}`);
-              processBoundaries([], context, type, labelFn);
+              await processBoundaries([], context, type, labelFn);
             }
           },
-          onerror(e) {
+          async onerror(e) {
             clearTimeout(timeoutId);
             _pendingTimeouts = _pendingTimeouts.filter(id => id !== timeoutId);
             const msg = `${type}: Network error${e.error ? ': ' + e.error : ''}`;
             logError(msg);
-            handleFetchError('network', null);
+            await handleFetchError('network', null);
           },
         });
         _activeRequests.push(request);
       } else {
-        processBoundaries([], context, type, labelFn);
+        await processBoundaries([], context, type, labelFn);
       }
     }
 
     if (_settings.layers.provinces.visible) {
-      doFetch(PROVINCES_LAYER_URL, 'province', ['PRNAME'], (attrs) => attrs.PRNAME || '');
+      await doFetch(PROVINCES_LAYER_URL, 'province', ['PRNAME'], (attrs) => attrs.PRNAME || '');
     }
     if (_settings.layers.censusDivisions.visible) {
-      doFetch(CENSUS_DIVISIONS_LAYER_URL, 'censusDivision', ['CDNAME', 'CDTYPE'], getCDLabel,
+      await doFetch(CENSUS_DIVISIONS_LAYER_URL, 'censusDivision', ['CDNAME', 'CDTYPE'], getCDLabel,
         _settings.layers.censusDivisions.minZoom);
     }
     if (_settings.layers.censusSubdivisions.visible) {
-      doFetch(CENSUS_SUBDIVISIONS_LAYER_URL, 'censusSubdivision', ['CSDNAME', 'CSDTYPE'], getCSDLabel,
+      await doFetch(CENSUS_SUBDIVISIONS_LAYER_URL, 'censusSubdivision', ['CSDNAME', 'CSDTYPE'], getCSDLabel,
         _settings.layers.censusSubdivisions.minZoom);
     }
     if (_settings.layers.designatedPlaces.visible) {
-      doFetch(DESIGNATED_PLACES_LAYER_URL, 'designatedPlace', ['DPLNAME', 'DPLTYPE'], getDPLLabel,
+      await doFetch(DESIGNATED_PLACES_LAYER_URL, 'designatedPlace', ['DPLNAME', 'DPLTYPE'], getDPLLabel,
         _settings.layers.designatedPlaces.minZoom);
     }
     if (_settings.layers.fsa.visible) {
-      doFetch(FSA_LAYER_URL, 'fsa', ['CFSAUID'], (attrs) => attrs.CFSAUID || '',
+      await doFetch(FSA_LAYER_URL, 'fsa', ['CFSAUID'], (attrs) => attrs.CFSAUID || '',
         _settings.layers.fsa.minZoom);
     }
   }
@@ -1081,7 +1082,7 @@
    * @param {string} args.name - Checkbox name
    * @param {boolean} args.checked - New checked state
    */
-  function onLayerCheckboxToggled(args) {
+  async function onLayerCheckboxToggled(args) {
     logDebug(`Layer toggle: ${args.name} → ${args.checked}`);
     let layerName;
     let settingsObj;
@@ -1120,7 +1121,7 @@
     const visibility = args.checked;
     settingsObj.visible = visibility;
     saveSettings();
-    sdk.Map.setLayerVisibility({ layerName, visibility });
+    await sdk.Map.setLayerVisibility({ layerName, visibility });
 
     const layerCard = document.querySelector(`.cagb-layer-card[data-layer="${layerKey}"]`);
     if (layerCard) {
@@ -1134,7 +1135,7 @@
       }
     }
 
-    fetchBoundaries();
+    await fetchBoundaries();
   }
 
   /**
@@ -1145,18 +1146,18 @@
   function debouncedFetchBoundaries(delay = 250) {
     logDebug(`Debounce: Clearing previous timeout, scheduling new fetch in ${delay}ms`);
     clearTimeout(_fetchBoundariesTimeout);
-    _fetchBoundariesTimeout = setTimeout(() => {
+    _fetchBoundariesTimeout = setTimeout(async () => {
       logDebug(`Debounce: Timer fired! Calling fetchBoundaries now`);
-      fetchBoundaries();
+      await fetchBoundaries();
     }, delay);
   }
 
   /**
    * Handles map movement end events. Triggers a debounced boundary fetch.
    */
-  function onMapMoveEnd() {
+  async function onMapMoveEnd() {
     try {
-      const zoom = sdk.Map.getZoomLevel();
+      const zoom = await sdk.Map.getZoomLevel();
       logDebug(`Map moved: zoom=${zoom}`);
       debouncedFetchBoundaries();
     } catch (e) {
@@ -1182,8 +1183,8 @@
    * Initializes the Provinces & Territories boundary layer.
    * Labels are hidden below zoom 5 and above zoom 21.
    */
-  function initProvincesLayer() {
-    sdk.Map.addLayer({
+  async function initProvincesLayer() {
+    await sdk.Map.addLayer({
       layerName: PROVINCES_LAYER_NAME,
       styleContext: {
         getStrokeWidth: ({ zoomLevel }) => Math.round(1 + (zoomLevel - 4) * 0.29),
@@ -1236,8 +1237,8 @@
    * Initializes the Census Divisions boundary layer.
    * At zoom ≤ 9, shortens labels by removing type suffixes.
    */
-  function initCensusDivisionsLayer() {
-    sdk.Map.addLayer({
+  async function initCensusDivisionsLayer() {
+    await sdk.Map.addLayer({
       layerName: CENSUS_DIVISIONS_LAYER_NAME,
       styleContext: {
         getLabel: ({ feature, zoomLevel }) => {
@@ -1279,8 +1280,8 @@
    * Initializes the Census Subdivisions boundary layer.
    * At low zoom, shows only the name portion without type suffix.
    */
-  function initCensusSubdivisionsLayer() {
-    sdk.Map.addLayer({
+  async function initCensusSubdivisionsLayer() {
+    await sdk.Map.addLayer({
       layerName: CENSUS_SUBDIVISIONS_LAYER_NAME,
       styleContext: {
         getLabel: ({ feature, zoomLevel }) => {
@@ -1321,8 +1322,8 @@
    * Initializes the Designated Places boundary layer.
    * Always shows full name + type suffix.
    */
-  function initDesignatedPlacesLayer() {
-    sdk.Map.addLayer({
+  async function initDesignatedPlacesLayer() {
+    await sdk.Map.addLayer({
       layerName: DESIGNATED_PLACES_LAYER_NAME,
       styleContext: {
         getLabel: ({ feature }) => feature?.properties?.label ?? '',
@@ -1359,8 +1360,8 @@
    * Initializes the Forward Sortation Area (FSA) boundary layer.
    * Labels are positioned above the boundary center.
    */
-  function initFSALayer() {
-    sdk.Map.addLayer({
+  async function initFSALayer() {
+    await sdk.Map.addLayer({
       layerName: FSA_LAYER_NAME,
       styleContext: {
         getLabel: ({ feature }) => feature?.properties?.label ?? '',
@@ -1413,35 +1414,35 @@
   /**
    * Orchestrates initialization of all map layers, UI controls, and event listeners.
    */
-  function initLayers() {
-    initProvincesLayer();
-    initCensusDivisionsLayer();
-    initCensusSubdivisionsLayer();
-    initDesignatedPlacesLayer();
-    initFSALayer();
+  async function initLayers() {
+    await initProvincesLayer();
+    await initCensusDivisionsLayer();
+    await initCensusSubdivisionsLayer();
+    await initDesignatedPlacesLayer();
+    await initFSALayer();
 
-    sdk.Map.setLayerOpacity({ layerName: PROVINCES_LAYER_NAME, opacity: _settings.layers.provinces.opacity });
-    sdk.Map.setLayerOpacity({ layerName: CENSUS_DIVISIONS_LAYER_NAME, opacity: _settings.layers.censusDivisions.opacity });
-    sdk.Map.setLayerOpacity({ layerName: CENSUS_SUBDIVISIONS_LAYER_NAME, opacity: _settings.layers.censusSubdivisions.opacity });
-    sdk.Map.setLayerOpacity({ layerName: DESIGNATED_PLACES_LAYER_NAME, opacity: _settings.layers.designatedPlaces.opacity });
-    sdk.Map.setLayerOpacity({ layerName: FSA_LAYER_NAME, opacity: _settings.layers.fsa.opacity });
+    await sdk.Map.setLayerOpacity({ layerName: PROVINCES_LAYER_NAME, opacity: _settings.layers.provinces.opacity });
+    await sdk.Map.setLayerOpacity({ layerName: CENSUS_DIVISIONS_LAYER_NAME, opacity: _settings.layers.censusDivisions.opacity });
+    await sdk.Map.setLayerOpacity({ layerName: CENSUS_SUBDIVISIONS_LAYER_NAME, opacity: _settings.layers.censusSubdivisions.opacity });
+    await sdk.Map.setLayerOpacity({ layerName: DESIGNATED_PLACES_LAYER_NAME, opacity: _settings.layers.designatedPlaces.opacity });
+    await sdk.Map.setLayerOpacity({ layerName: FSA_LAYER_NAME, opacity: _settings.layers.fsa.opacity });
 
-    sdk.Map.setLayerVisibility({ layerName: PROVINCES_LAYER_NAME, visibility: _settings.layers.provinces.visible });
-    sdk.Map.setLayerVisibility({ layerName: CENSUS_DIVISIONS_LAYER_NAME, visibility: _settings.layers.censusDivisions.visible });
-    sdk.Map.setLayerVisibility({ layerName: CENSUS_SUBDIVISIONS_LAYER_NAME, visibility: _settings.layers.censusSubdivisions.visible });
-    sdk.Map.setLayerVisibility({ layerName: DESIGNATED_PLACES_LAYER_NAME, visibility: _settings.layers.designatedPlaces.visible });
-    sdk.Map.setLayerVisibility({ layerName: FSA_LAYER_NAME, visibility: _settings.layers.fsa.visible });
+    await sdk.Map.setLayerVisibility({ layerName: PROVINCES_LAYER_NAME, visibility: _settings.layers.provinces.visible });
+    await sdk.Map.setLayerVisibility({ layerName: CENSUS_DIVISIONS_LAYER_NAME, visibility: _settings.layers.censusDivisions.visible });
+    await sdk.Map.setLayerVisibility({ layerName: CENSUS_SUBDIVISIONS_LAYER_NAME, visibility: _settings.layers.censusSubdivisions.visible });
+    await sdk.Map.setLayerVisibility({ layerName: DESIGNATED_PLACES_LAYER_NAME, visibility: _settings.layers.designatedPlaces.visible });
+    await sdk.Map.setLayerVisibility({ layerName: FSA_LAYER_NAME, visibility: _settings.layers.fsa.visible });
 
-    sdk.LayerSwitcher.addLayerCheckbox({ name: provincesCheckboxName });
-    sdk.LayerSwitcher.setLayerCheckboxChecked({ name: provincesCheckboxName, isChecked: _settings.layers.provinces.visible });
-    sdk.LayerSwitcher.addLayerCheckbox({ name: censusDivisionsCheckboxName });
-    sdk.LayerSwitcher.setLayerCheckboxChecked({ name: censusDivisionsCheckboxName, isChecked: _settings.layers.censusDivisions.visible });
-    sdk.LayerSwitcher.addLayerCheckbox({ name: censusSubdivisionsCheckboxName });
-    sdk.LayerSwitcher.setLayerCheckboxChecked({ name: censusSubdivisionsCheckboxName, isChecked: _settings.layers.censusSubdivisions.visible });
-    sdk.LayerSwitcher.addLayerCheckbox({ name: designatedPlacesCheckboxName });
-    sdk.LayerSwitcher.setLayerCheckboxChecked({ name: designatedPlacesCheckboxName, isChecked: _settings.layers.designatedPlaces.visible });
-    sdk.LayerSwitcher.addLayerCheckbox({ name: fsaCheckboxName });
-    sdk.LayerSwitcher.setLayerCheckboxChecked({ name: fsaCheckboxName, isChecked: _settings.layers.fsa.visible });
+    await sdk.LayerSwitcher.addLayerCheckbox({ name: provincesCheckboxName });
+    await sdk.LayerSwitcher.setLayerCheckboxChecked({ name: provincesCheckboxName, isChecked: _settings.layers.provinces.visible });
+    await sdk.LayerSwitcher.addLayerCheckbox({ name: censusDivisionsCheckboxName });
+    await sdk.LayerSwitcher.setLayerCheckboxChecked({ name: censusDivisionsCheckboxName, isChecked: _settings.layers.censusDivisions.visible });
+    await sdk.LayerSwitcher.addLayerCheckbox({ name: censusSubdivisionsCheckboxName });
+    await sdk.LayerSwitcher.setLayerCheckboxChecked({ name: censusSubdivisionsCheckboxName, isChecked: _settings.layers.censusSubdivisions.visible });
+    await sdk.LayerSwitcher.addLayerCheckbox({ name: designatedPlacesCheckboxName });
+    await sdk.LayerSwitcher.setLayerCheckboxChecked({ name: designatedPlacesCheckboxName, isChecked: _settings.layers.designatedPlaces.visible });
+    await sdk.LayerSwitcher.addLayerCheckbox({ name: fsaCheckboxName });
+    await sdk.LayerSwitcher.setLayerCheckboxChecked({ name: fsaCheckboxName, isChecked: _settings.layers.fsa.visible });
 
     sdk.Events.on({ eventName: 'wme-layer-checkbox-toggled', eventHandler: onLayerCheckboxToggled });
     sdk.Events.on({ eventName: 'wme-map-move-end', eventHandler: onMapMoveEnd });
@@ -1508,21 +1509,29 @@
     return modLetters ? `${modLetters}+${keyChar}` : keyChar;
   }
 
+  let _lastShortcutSnapshot = '';
+
   /**
-   * Saves current shortcut assignments to settings on page unload.
+   * Reads shortcut assignments from the SDK into _settings and saves only when they changed.
+   * WME has no shortcut-change event, so this runs at init and after each CAGB shortcut fires.
+   * The sync beforeunload handler (saveSettings) persists the last gathered values.
    */
-  function saveShortcutSettings() {
+  async function saveShortcutsIfChanged() {
     try {
-      const allShortcuts = sdk.Shortcuts.getAllShortcuts();
+      const allShortcuts = await sdk.Shortcuts.getAllShortcuts();
       allShortcuts.forEach((shortcut) => {
         if (_settings.shortcuts[shortcut.shortcutId]) {
-          const sdkValue = shortcut.shortcutKeys;
-          const raw = comboToRawKeycodes(sdkValue);
+          const raw = comboToRawKeycodes(shortcut.shortcutKeys);
           const combo = shortcutKeycodesToCombo(raw);
           _settings.shortcuts[shortcut.shortcutId] = { raw, combo };
         }
       });
-      saveSettings();
+
+      const snapshot = JSON.stringify(_settings.shortcuts);
+      if (snapshot !== _lastShortcutSnapshot) {
+        _lastShortcutSnapshot = snapshot;
+        saveSettings();
+      }
     } catch (e) {
       logError(`Failed to save shortcut settings: ${e.message}`);
     }
@@ -1582,7 +1591,7 @@
         background: linear-gradient(135deg, #c0392b 0%, #e74c3c 50%, #e8593a 100%);
         padding: 10px;
         border-radius: 12px 12px 0 0;
-        margin: -8px -8px 16px -8px;
+        margin: 0px 0px 5px 0px;
         position: relative;
         overflow: hidden;
       }
@@ -1604,7 +1613,7 @@
         display: flex;
         align-items: center;
         gap: 10px;
-        margin-bottom: 4px;
+        margin-bottom: 0px;
       }
 
       .wme-cagb-panel .cagb-header-icon {
@@ -1623,7 +1632,7 @@
 
       .wme-cagb-panel .cagb-header-subtitle {
         color: rgba(255, 255, 255, 0.9);
-        font-size: 12px; margin-left: 42px;
+        font-size: 11px; margin-left: 0px;
       }
 
       .wme-cagb-panel .cagb-quick-presets {
@@ -2021,9 +2030,9 @@
 
     // Visibility toggle
     const toggle = card.querySelector('.cagb-visibility-toggle');
-    toggle.addEventListener('click', (e) => {
+    toggle.addEventListener('click', async (e) => {
       e.stopPropagation();
-      toggleLayerVisibility(layerKey);
+      await toggleLayerVisibility(layerKey);
     });
 
     // Color pickers
@@ -2032,13 +2041,13 @@
       input.style.pointerEvents = 'auto';
 
       display.addEventListener('click', () => input.click());
-      input.addEventListener('input', (e) => {
+      input.addEventListener('input', async (e) => {
         const color = e.target.value;
         display.style.background = color;
         display.setAttribute('data-color', color);
         const setting = input.getAttribute('data-setting');
         _settings.layers[layerKey][setting] = color;
-        sdk.Map.redrawLayer({ layerName: LAYER_NAME_MAP[layerKey] });
+        await sdk.Map.redrawLayer({ layerName: LAYER_NAME_MAP[layerKey] });
         saveSettings();
       });
     });
@@ -2047,21 +2056,21 @@
     const slider = card.querySelector('input[data-setting="opacity"]');
     if (slider) {
       updateSliderBackground(slider);
-      slider.addEventListener('input', (e) => {
+      slider.addEventListener('input', async (e) => {
         const value = parseFloat(e.target.value);
         updateSliderBackground(e.target);
         _settings.layers[layerKey].opacity = value;
-        sdk.Map.setLayerOpacity({ layerName: LAYER_NAME_MAP[layerKey], opacity: value });
+        await sdk.Map.setLayerOpacity({ layerName: LAYER_NAME_MAP[layerKey], opacity: value });
         saveSettings();
       });
 
       card.querySelectorAll('.cagb-slider-preset').forEach((btn) => {
-        btn.addEventListener('click', () => {
+        btn.addEventListener('click', async () => {
           const value = parseFloat(btn.getAttribute('data-value'));
           slider.value = value;
           updateSliderBackground(slider);
           _settings.layers[layerKey].opacity = value;
-          sdk.Map.setLayerOpacity({ layerName: LAYER_NAME_MAP[layerKey], opacity: value });
+          await sdk.Map.setLayerOpacity({ layerName: LAYER_NAME_MAP[layerKey], opacity: value });
           saveSettings();
         });
       });
@@ -2070,20 +2079,20 @@
     // Dynamic labels checkbox
     const dynamicLabelsCheckbox = card.querySelector('input[data-setting="dynamicLabels"]');
     if (dynamicLabelsCheckbox) {
-      dynamicLabelsCheckbox.addEventListener('change', (e) => {
+      dynamicLabelsCheckbox.addEventListener('change', async (e) => {
         _settings.layers[layerKey].dynamicLabels = e.target.checked;
         saveSettings();
-        fetchBoundaries();
+        await fetchBoundaries();
       });
     }
 
     // Min zoom input
     const minZoomInput = card.querySelector('input[data-setting="minZoom"]');
     if (minZoomInput) {
-      minZoomInput.addEventListener('change', (e) => {
+      minZoomInput.addEventListener('change', async (e) => {
         _settings.layers[layerKey].minZoom = parseInt(e.target.value, 10);
         saveSettings();
-        fetchBoundaries();
+        await fetchBoundaries();
       });
     }
 
@@ -2101,7 +2110,7 @@
    *
    * @param {string} presetName - Name of preset to apply
    */
-  function applyPreset(presetName) {
+  async function applyPreset(presetName) {
     const presets = {
       'high-contrast': {
         settings: {
@@ -2143,20 +2152,20 @@
 
     const preset = presets[presetName];
     if (preset) {
-      Object.keys(preset.settings).forEach((layerKey) => {
+      for (const layerKey of Object.keys(preset.settings)) {
         Object.keys(preset.settings[layerKey]).forEach((setting) => {
           _settings.layers[layerKey][setting] = preset.settings[layerKey][setting];
         });
         if (preset.settings[layerKey].opacity !== undefined) {
-          sdk.Map.setLayerOpacity({
+          await sdk.Map.setLayerOpacity({
             layerName: LAYER_NAME_MAP[layerKey],
             opacity: preset.settings[layerKey].opacity,
           });
         }
         if (preset.settings[layerKey].color !== undefined) {
-          sdk.Map.redrawLayer({ layerName: LAYER_NAME_MAP[layerKey] });
+          await sdk.Map.redrawLayer({ layerName: LAYER_NAME_MAP[layerKey] });
         }
-      });
+      }
       saveSettings();
 
       setTimeout(() => {
@@ -2190,7 +2199,7 @@
           <div class="cagb-header-icon"><i class="fas fa-map-marked-alt"></i></div>
           <h1>CA Government Boundaries</h1>
         </div>
-        <div class="cagb-header-subtitle">Configure Canadian boundary layers</div>
+        <div class="cagb-header-subtitle">Configure Canadian boundary layers · v${GM_info.script.version}</div>
       </div>
     `;
     container.appendChild(header);
@@ -2216,7 +2225,7 @@
       </div>
     `;
     presetsDiv.querySelectorAll('.cagb-preset-chip').forEach((chip) => {
-      chip.addEventListener('click', () => applyPreset(chip.getAttribute('data-preset')));
+      chip.addEventListener('click', async () => await applyPreset(chip.getAttribute('data-preset')));
     });
     container.appendChild(presetsDiv);
 
@@ -2253,20 +2262,20 @@
       </button>
     `;
 
-    footerActions.querySelector('#cagb-reset-all').addEventListener('click', () => {
+    footerActions.querySelector('#cagb-reset-all').addEventListener('click', async () => {
       if (confirm('Are you sure you want to reset all settings to defaults?')) {
         _settings = getDefaultSettings();
         saveSettings();
 
-        Object.keys(_settings.layers).forEach((layerKey) => {
-          sdk.Map.setLayerOpacity({
+        for (const layerKey of Object.keys(_settings.layers)) {
+          await sdk.Map.setLayerOpacity({
             layerName: LAYER_NAME_MAP[layerKey],
             opacity: _settings.layers[layerKey].opacity,
           });
-          sdk.Map.redrawLayer({ layerName: LAYER_NAME_MAP[layerKey] });
-        });
+          await sdk.Map.redrawLayer({ layerName: LAYER_NAME_MAP[layerKey] });
+        }
 
-        fetchBoundaries();
+        await fetchBoundaries();
 
         setTimeout(() => {
           const tabPane = document.querySelector('[data-cagb-tab]');
@@ -2309,13 +2318,13 @@
    *
    * @param {string} layerKey - Layer identifier
    */
-  function toggleLayerVisibility(layerKey) {
+  async function toggleLayerVisibility(layerKey) {
     const newVisibility = !_settings.layers[layerKey].visible;
     _settings.layers[layerKey].visible = newVisibility;
     saveSettings();
-    sdk.Map.setLayerVisibility({ layerName: LAYER_NAME_MAP[layerKey], visibility: newVisibility });
+    await sdk.Map.setLayerVisibility({ layerName: LAYER_NAME_MAP[layerKey], visibility: newVisibility });
 
-    sdk.LayerSwitcher.setLayerCheckboxChecked({
+    await sdk.LayerSwitcher.setLayerCheckboxChecked({
       name: LAYER_CHECKBOX_NAME_MAP[layerKey],
       isChecked: newVisibility,
     });
@@ -2332,14 +2341,14 @@
       }
     }
 
-    fetchBoundaries();
+    await fetchBoundaries();
   }
 
   /**
    * Registers keyboard shortcuts with the WME SDK.
    * All shortcuts default to unassigned — users assign keys via WME Settings.
    */
-  function registerShortcuts() {
+  async function registerShortcuts() {
     const shortcuts = [
       {
         id: 'cagb-toggle-provinces',
@@ -2369,42 +2378,50 @@
     ];
 
     let needsSave = false;
+    const withSave = (handler) => async () => {
+      await handler();
+      await saveShortcutsIfChanged();
+    };
 
-    shortcuts.forEach(({ id, description, handler }) => {
-      try {
-        const comboKeys = _settings.shortcuts[id]?.combo || null;
-        sdk.Shortcuts.createShortcut({ shortcutId: id, shortcutKeys: comboKeys, description, callback: handler });
-      } catch (e) {
-        if (e.message && e.message.includes('already in use')) {
-          _settings.shortcuts[id] = { raw: null, combo: null };
-          needsSave = true;
-          try {
-            sdk.Shortcuts.createShortcut({ shortcutId: id, shortcutKeys: null, description, callback: handler });
-          } catch (retryError) {
-            logError(`Failed to register ${id} even with null keys: ${retryError.message}`);
-          }
-        } else {
-          logError(`Failed to register ${id}: ${e.message}`);
-        }
+    for (const { id, description, handler } of shortcuts) {
+      let comboKeys = _settings.shortcuts[id]?.combo || null;
+
+      if (comboKeys && (await sdk.Shortcuts.areShortcutKeysInUse({ shortcutKeys: comboKeys }))) {
+        logError(`Shortcut keys "${comboKeys}" are already in use by another script. "${description}" will not be set with these keys.`);
+        comboKeys = null;
+        _settings.shortcuts[id] = { raw: null, combo: null };
+        needsSave = true;
       }
-    });
+
+      try {
+        await sdk.Shortcuts.createShortcut({
+          shortcutId: id,
+          shortcutKeys: comboKeys,
+          description,
+          callback: withSave(handler),
+        });
+      } catch (e) {
+        logError(`Failed to register ${id}: ${e.message}`);
+      }
+    }
 
     if (needsSave) saveSettings();
   }
 
-  // Save shortcut settings on page unload
-  window.addEventListener('beforeunload', saveShortcutSettings);
+  // Persist settings on page unload. Must be sync: async handlers can't finish during unload.
+  window.addEventListener('beforeunload', saveSettings);
 
   /**
    * Main initialization function.
    */
-  function init() {
+  async function init() {
     loadSettings();
-    registerShortcuts();
-    initLayers();
+    await registerShortcuts();
+    await saveShortcutsIfChanged();
+    await initLayers();
     initTab();
     showScriptInfoAlert();
-    fetchBoundaries();
+    await fetchBoundaries();
     log('CA Government Boundaries initialized.');
   }
 
@@ -2413,5 +2430,5 @@
     shortcuts: () => _settings.shortcuts,
   };
 
-  init();
+  await init();
 })();
